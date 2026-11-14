@@ -1,10 +1,10 @@
 # Daily Notes API
 
-A private notes backend built with FastAPI. Users authenticate with Google, receive an application JWT, and can manage only their own notes. Rich-text HTML is stored in PostgreSQL; image files are uploaded directly to private S3-compatible object storage.
+A private notes backend built with FastAPI. Users register and sign in with email and password, receive an application JWT, and can manage only their own notes. Rich-text HTML is stored in PostgreSQL; image files are uploaded directly to private S3-compatible object storage.
 
 ## Features
 
-- Google ID-token verification and application JWT authentication.
+- Email/password registration and login with Argon2 password hashing and application JWT authentication.
 - Private notes CRUD with ownership-scoped queries and soft deletion.
 - Rich-text content stored as HTML, with backend sanitization.
 - Presigned image upload and download URLs scoped to the authenticated user.
@@ -14,7 +14,7 @@ A private notes backend built with FastAPI. Users authenticate with Google, rece
 
 ## Technology
 
-Python 3.12+, FastAPI, SQLAlchemy 2.x, PostgreSQL, Psycopg 3, Alembic, Pydantic Settings, Google Auth, PyJWT, Boto3, and pytest.
+Python 3.12+, FastAPI, SQLAlchemy 2.x, PostgreSQL, Psycopg 3, Alembic, Pydantic Settings, pwdlib, email-validator, PyJWT, Boto3, and pytest.
 
 ## Project structure
 
@@ -43,11 +43,7 @@ python -m pip install -r requirements.txt
 Copy-Item .env.example .env
 ```
 
-Set the environment variables in `.env`. Never commit this file. `DATABASE_URL`, `GOOGLE_CLIENT_ID`, and a strong `JWT_SECRET_KEY` (at least 32 characters) are required. S3 settings are required to use upload and download URL endpoints. Set `GEMINI_API_KEY` to enable AI text generation.
-
-### Google OAuth
-
-Create a Google OAuth client for the React Native application and set its client ID as `GOOGLE_CLIENT_ID`. The backend accepts only Google ID tokens verified for that audience; it does not use or store Google access tokens or passwords.
+Set the environment variables in `.env`. Never commit this file. `DATABASE_URL` and a strong `JWT_SECRET_KEY` (at least 32 characters) are required. S3 settings are required to use upload and download URL endpoints. Set `GEMINI_API_KEY` to enable AI text generation.
 
 ### PostgreSQL
 
@@ -93,9 +89,10 @@ All note and upload endpoints require `Authorization: Bearer <application-jwt>`.
 
 | Method | Path | Purpose |
 |---|---|---|
-| `POST` | `/auth/google` | Verify a Google ID token and issue an application JWT |
+| `POST` | `/auth/register` | Register with a name, email, and password; returns an application JWT |
+| `POST` | `/auth/login` | Sign in with email and password; returns an application JWT |
 | `POST` | `/notes` | Create a note |
-| `GET` | `/notes?limit=50&offset=0` | List the current user's notes |
+| `GET` | `/notes?q=meeting&limit=50&offset=0` | Search and list the current user's notes |
 | `GET` | `/notes/{note_id}` | Retrieve an owned, non-deleted note |
 | `PUT` | `/notes/{note_id}` | Update an owned, non-deleted note |
 | `DELETE` | `/notes/{note_id}` | Soft-delete an owned note |
@@ -103,6 +100,8 @@ All note and upload endpoints require `Authorization: Bearer <application-jwt>`.
 | `POST` | `/uploads/presigned-download-url` | Create a download URL for an owned object key |
 | `GET` | `/ai/models` | List hardcoded Gemini model values and labels; first model is default |
 | `POST` | `/ai/generate` | Generate text from a prompt and optionally up to 10 owned image objects |
+
+The `q` parameter is optional and searches note titles and content. Exact title matches rank first, followed by title prefixes, other title matches, and then content matches. `limit` and `offset` apply to the ranked results.
 
 `POST /ai/generate` accepts `{"prompt":"Describe this","model":"gemini-3.1-flash-lite","image_object_keys":["users/1/notes/...jpg"]}`. The `model` field is optional and defaults to `gemini-3.1-flash-lite`; use the values returned by `GET /ai/models`, not their display labels. Omit `image_object_keys` for text-only generation. Image object keys must belong to the authenticated user and point to supported JPEG, PNG, or WebP objects no larger than 5 MiB each. The model identifiers are configured as requested and must also be available to the Google Gemini API key's project.
 
@@ -112,10 +111,10 @@ Uploads accept JPEG, PNG, or WebP images up to 5 MiB. Object keys are generated 
 
 ## Tests
 
-Tests use an isolated in-memory SQLite database and mocked Google/S3 integrations:
+Tests use an isolated in-memory SQLite database and mocked S3 integrations:
 
 ```powershell
 python -m pytest
 ```
 
-They cover Google login, JWT validation, note CRUD and cross-user isolation, soft deletion, upload validation, and object ownership checks. No cloud services or migrations are invoked by the test suite.
+They cover registration, password login, JWT validation, note CRUD and cross-user isolation, soft deletion, upload validation, and object ownership checks. No cloud services or migrations are invoked by the test suite.

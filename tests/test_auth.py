@@ -4,29 +4,71 @@ import jwt
 
 from app.core.config import settings
 from app.core.security import create_access_token
-from app.services import auth_service
+from app.models.user import User
+from app.services.auth_service import password_hash
 from app.utils.datetime import utc_now
 
 
-def test_google_login_registers_and_returns_application_token(
-    client, monkeypatch
-):
-    claims = {
-        "sub": "google-new",
-        "email": "New.User@Example.com",
-        "email_verified": True,
-        "name": "New User",
-        "picture": "https://example.com/avatar.png",
-    }
-    monkeypatch.setattr(auth_service, "verify_google_token", lambda token: claims)
+def test_register_creates_user_and_returns_application_token(client, db_session):
+    response = client.post(
+        "/auth/register",
+        json={
+            "name": "  New User  ",
+            "email": " New.User@Example.com ",
+            "password": "secure-password",
+        },
+    )
 
-    response = client.post("/auth/google", json={"id_token": "verified"})
-
-    assert response.status_code == 200
+    assert response.status_code == 201
     body = response.json()
     assert body["token_type"] == "bearer"
     assert body["expires_in"] == settings.jwt_expire_minutes * 60
+    assert body["user"]["name"] == "New User"
     assert body["user"]["email"] == "new.user@example.com"
+    assert "password_hash" not in body["user"]
+    assert jwt.decode(
+        body["access_token"],
+        settings.jwt_secret_key.get_secret_value(),
+        algorithms=["HS256"],
+    )["type"] == "access"
+
+    user = db_session.query(User).filter_by(email="new.user@example.com").one()
+    assert password_hash.verify("secure-password", user.password_hash)
+
+
+def test_register_rejects_duplicate_email_case_insensitively(client):
+    payload = {
+        "name": "New User",
+        "email": "user@example.com",
+        "password": "secure-password",
+    }
+    assert client.post("/auth/register", json=payload).status_code == 201
+
+    payload["email"] = "USER@example.com"
+    response = client.post("/auth/register", json=payload)
+
+    assert response.status_code == 409
+
+
+def test_login_returns_application_token(client):
+    client.post(
+        "/auth/register",
+        json={
+            "name": "New User",
+            "email": "user@example.com",
+            "password": "secure-password",
+        },
+    )
+
+    response = client.post(
+        "/auth/login",
+        json={"email": "USER@example.com", "password": "secure-password"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["user"]["email"] == "user@example.com"
+    assert body["token_type"] == "bearer"
     assert jwt.decode(
         body["access_token"],
         settings.jwt_secret_key.get_secret_value(),
@@ -34,48 +76,53 @@ def test_google_login_registers_and_returns_application_token(
     )["type"] == "access"
 
 
-def test_google_login_rejects_an_existing_email_from_another_google_account(
-    client, users, monkeypatch
-):
-    monkeypatch.setattr(
-        auth_service,
-        "verify_google_token",
-        lambda token: {
-            "sub": "different-google-id",
-            "email": users[0].email,
-            "email_verified": True,
+def test_login_returns_same_error_for_unknown_email_and_bad_password(client):
+    client.post(
+        "/auth/register",
+        json={
+            "name": "New User",
+            "email": "user@example.com",
+            "password": "secure-password",
         },
     )
 
-    response = client.post("/auth/google", json={"id_token": "verified"})
-
-    assert response.status_code == 409
-
-
-def test_google_login_rejects_invalid_or_unverified_identity(client, monkeypatch):
-    def invalid_google_token(token, request, audience):
-        raise ValueError("invalid token")
-
-    monkeypatch.setattr(
-        auth_service.id_token,
-        "verify_oauth2_token",
-        invalid_google_token,
+    unknown_email = client.post(
+        "/auth/login",
+        json={"email": "unknown@example.com", "password": "secure-password"},
     )
-    assert client.post("/auth/google", json={"id_token": "invalid"}).status_code == 401
+    wrong_password = client.post(
+        "/auth/login",
+        json={"email": "user@example.com", "password": "wrong-password"},
+    )
 
-    monkeypatch.setattr(
-        auth_service.id_token,
-        "verify_oauth2_token",
-        lambda token, request, audience: {
-            "sub": "google-unverified",
-            "email": "unverified@example.com",
-            "email_verified": False,
+    assert unknown_email.status_code == 401
+    assert wrong_password.status_code == 401
+    assert unknown_email.json() == wrong_password.json()
+
+
+def test_register_rejects_invalid_email_and_short_password(client):
+    invalid_email = client.post(
+        "/auth/register",
+        json={
+            "name": "New User",
+            "email": "not-an-email",
+            "password": "secure-password",
         },
     )
-    assert client.post("/auth/google", json={"id_token": "unverified"}).status_code == 401
+    short_password = client.post(
+        "/auth/register",
+        json={
+            "name": "New User",
+            "email": "user@example.com",
+            "password": "short",
+        },
+    )
+
+    assert invalid_email.status_code == 422
+    assert short_password.status_code == 422
 
 
-def test_expired_and_invalid_jwts_are_rejected(client):
+def test_expired_and_invalid_jwts_are_rejected(client, users):
     expired = jwt.encode(
         {
             "sub": "1",

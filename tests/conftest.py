@@ -9,6 +9,9 @@ from app.db.base import Base
 from app.db.session import get_db
 from app.main import app
 from app.models.user import User
+from app.services.auth_service import password_hash
+
+TEST_PASSWORD_HASH = password_hash.hash("test-password")
 
 
 @pytest.fixture
@@ -42,8 +45,16 @@ def client(db_session):
 
 @pytest.fixture
 def users(db_session):
-    user_a = User(google_id="google-a", name="User A", email="a@example.com")
-    user_b = User(google_id="google-b", name="User B", email="b@example.com")
+    user_a = User(
+        name="User A",
+        email="a@example.com",
+        password_hash=TEST_PASSWORD_HASH,
+    )
+    user_b = User(
+        name="User B",
+        email="b@example.com",
+        password_hash=TEST_PASSWORD_HASH,
+    )
     db_session.add_all([user_a, user_b])
     db_session.commit()
     db_session.refresh(user_a)

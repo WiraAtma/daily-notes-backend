@@ -27,12 +27,13 @@ def create_note_endpoint(
 
 @router.get("", response_model=NoteList)
 def list_notes_endpoint(
+    q: str | None = Query(default=None, max_length=255),
     limit: int = Query(default=50, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> NoteList:
-    items, total = list_notes(db, current_user.id, limit, offset)
+    items, total = list_notes(db, current_user.id, limit, offset, q=q)
     return NoteList(items=items, total=total, limit=limit, offset=offset)
 
 

@@ -10,7 +10,7 @@ ALLOWED_TAGS = {
 }
 ALLOWED_ATTRIBUTES = {
     "a": ["href", "title"],
-    "img": ["src", "alt", "title", "width", "height"],
+    "img": ["src", "alt", "title", "width", "height", "data-object-key"],
     "input": lambda tag, name, value: name in {"checked", "disabled"}
     or (name == "type" and value == "checkbox"),
     "td": ["colspan", "rowspan"],

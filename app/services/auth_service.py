@@ -1,90 +1,51 @@
-from typing import Any
-
-import google.auth.exceptions
-from google.auth.transport.requests import Request
-from google.oauth2 import id_token
+from pwdlib import PasswordHash
 from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.core.config import settings
-from app.core.security import create_access_token
 from app.models.user import User
-from app.utils.datetime import utc_now
+from app.schemas.auth import CredentialsRequest, RegisterRequest
+
+password_hash = PasswordHash.recommended()
 
 
-def verify_google_token(token: str) -> dict[str, Any]:
-    try:
-        claims = id_token.verify_oauth2_token(
-            token,
-            Request(),
-            audience=settings.google_client_id,
-        )
-    except (ValueError, google.auth.exceptions.GoogleAuthError) as exc:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid Google ID token",
-        ) from exc
-
-    if (
-        not claims.get("sub")
-        or not claims.get("email")
-        or claims.get("email_verified") is not True
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Google account must have a verified email",
-        )
-    return claims
-
-
-def authenticate_google_user(db: Session, token: str) -> User:
-    claims = verify_google_token(token)
-    google_id = str(claims["sub"])
-    email = str(claims["email"]).strip().lower()
-
-    user = db.scalar(select(User).where(User.google_id == google_id))
-    if user is not None:
-        user.name = str(claims.get("name") or user.name)[:255]
-        user.email = email
-        user.avatar = claims.get("picture")
-        user.updated_at = utc_now()
-        try:
-            db.commit()
-        except IntegrityError as exc:
-            db.rollback()
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="Google account conflicts with an existing user",
-            ) from exc
-        db.refresh(user)
-        return user
-
-    existing_email_user = db.scalar(select(User).where(User.email == email))
-    if existing_email_user is not None:
+def register_user(db: Session, payload: RegisterRequest) -> User:
+    email = str(payload.email).lower()
+    existing_user = db.scalar(select(User).where(User.email == email))
+    if existing_user is not None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Email is already associated with another Google account",
+            detail="An account with this email already exists",
         )
 
     user = User(
-        google_id=google_id,
-        name=str(claims.get("name") or email.split("@", 1)[0])[:255],
+        name=payload.name,
         email=email,
-        avatar=claims.get("picture"),
+        password_hash=password_hash.hash(payload.password),
     )
     db.add(user)
     try:
         db.commit()
     except IntegrityError as exc:
         db.rollback()
-        concurrent_user = db.scalar(select(User).where(User.google_id == google_id))
-        if concurrent_user is not None:
-            return concurrent_user
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Google account conflicts with an existing user",
-        ) from exc
+        if db.scalar(select(User.id).where(User.email == email)) is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="An account with this email already exists",
+            ) from exc
+        raise
     db.refresh(user)
+    return user
+
+
+def authenticate_user(db: Session, payload: CredentialsRequest) -> User:
+    email = str(payload.email).lower()
+    user = db.scalar(select(User).where(User.email == email))
+    if user is None or not password_hash.verify(payload.password, user.password_hash):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Email atau password salah",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
     return user

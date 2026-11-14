@@ -15,7 +15,6 @@ class Settings(BaseSettings):
     app_name: str = "Daily Notes API"
     app_env: str = "development"
     database_url: str
-    google_client_id: str
     jwt_secret_key: SecretStr
     jwt_algorithm: str = "HS256"
     jwt_expire_minutes: int = Field(default=60, gt=0, le=1440)
@@ -57,7 +56,6 @@ class Settings(BaseSettings):
     @property
     def cors_origin_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
-
 
 @lru_cache
 def get_settings() -> Settings:

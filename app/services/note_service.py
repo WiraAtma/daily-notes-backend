@@ -1,5 +1,5 @@
 from fastapi import HTTPException, status
-from sqlalchemy import func, select
+from sqlalchemy import case, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.models.note import Note
@@ -22,19 +22,52 @@ def create_note(db: Session, user: User, payload: NoteCreate) -> Note:
     return note
 
 
-def list_notes(db: Session, user_id: int, limit: int, offset: int) -> tuple[list[Note], int]:
-    scope = (Note.user_id == user_id, Note.deleted_at.is_(None))
+def list_notes(
+    db: Session,
+    user_id: int,
+    limit: int,
+    offset: int,
+    q: str | None = None,
+) -> tuple[list[Note], int]:
+    filters = [Note.user_id == user_id, Note.deleted_at.is_(None)]
+    search_term = q.strip() if q else ""
+
+    if search_term:
+        escaped_term = _escape_like_pattern(search_term)
+        contains_pattern = f"%{escaped_term}%"
+        title_match = Note.title.ilike(contains_pattern, escape="\\")
+        content_match = Note.content.ilike(contains_pattern, escape="\\")
+        filters.append(or_(title_match, content_match))
+        title_priority = case(
+            (func.lower(Note.title) == search_term.lower(), 0),
+            (
+                Note.title.ilike(f"{escaped_term}%", escape="\\"),
+                1,
+            ),
+            (title_match, 2),
+            else_=3,
+        )
+        ordering = (title_priority, Note.updated_at.desc())
+    else:
+        ordering = (Note.updated_at.desc(),)
+
     items = list(
         db.scalars(
             select(Note)
-            .where(*scope)
-            .order_by(Note.updated_at.desc())
+            .where(*filters)
+            .order_by(*ordering)
             .limit(limit)
             .offset(offset)
         ).all()
     )
-    total = db.scalar(select(func.count()).select_from(Note).where(*scope)) or 0
+    total = db.scalar(
+        select(func.count()).select_from(Note).where(*filters)
+    ) or 0
     return items, total
+
+
+def _escape_like_pattern(value: str) -> str:
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
 def get_note(db: Session, user_id: int, note_id: int) -> Note:

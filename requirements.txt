@@ -5,10 +5,11 @@ psycopg[binary]==3.3.8
 alembic==1.20.1
 pydantic==2.14.3
 pydantic-settings==2.16.2
-google-auth==2.62.2
 google-genai==3.3.0
+email-validator==2.3.0
 requests==2.32.5
 PyJWT[crypto]==2.15.1
+pwdlib[argon2]==0.3.0
 boto3==1.44.1
 bleach==6.3.0
 python-multipart==0.0.33

@@ -32,6 +32,59 @@ def test_note_create_list_update_and_soft_delete(client, auth_headers):
     assert client.get("/notes", headers=headers).json()["total"] == 0
 
 
+def test_note_search_matches_title_and_content_with_title_priority(
+    client, auth_headers
+):
+    headers, _ = auth_headers
+    notes = [
+        ("Weekly plan", "<p>Weekly meeting agenda</p>"),
+        ("Project meeting", "<p>Project discussion</p>"),
+        ("Meeting with team", "<p>Team discussion</p>"),
+        ("Meeting", "<p>Exact title match</p>"),
+    ]
+    for title, content in notes:
+        response = client.post(
+            "/notes",
+            headers=headers,
+            json={"title": title, "content": content},
+        )
+        assert response.status_code == 201
+
+    response = client.get("/notes?q=meeting&limit=2", headers=headers)
+
+    assert response.status_code == 200
+    assert response.json()["total"] == 4
+    assert [item["title"] for item in response.json()["items"]] == [
+        "Meeting",
+        "Meeting with team",
+    ]
+
+    next_page = client.get("/notes?q=meeting&limit=2&offset=2", headers=headers)
+    assert [item["title"] for item in next_page.json()["items"]] == [
+        "Project meeting",
+        "Weekly plan",
+    ]
+
+
+def test_note_search_treats_like_wildcards_as_literal_characters(
+    client, auth_headers
+):
+    headers, _ = auth_headers
+    for title in ("Budget 100% done", "Budget 1000 done"):
+        assert client.post(
+            "/notes",
+            headers=headers,
+            json={"title": title, "content": ""},
+        ).status_code == 201
+
+    response = client.get("/notes?q=100%25", headers=headers)
+
+    assert response.status_code == 200
+    assert [item["title"] for item in response.json()["items"]] == [
+        "Budget 100% done"
+    ]
+
+
 def test_note_html_is_sanitized_and_oversized_content_is_rejected(client, auth_headers):
     headers, _ = auth_headers
     response = client.post(
@@ -52,6 +105,27 @@ def test_note_html_is_sanitized_and_oversized_content_is_rejected(client, auth_h
         json={"title": "Too large", "content": "x" * 200_001},
     )
     assert oversized.status_code == 422
+
+
+def test_note_image_object_key_is_preserved_and_other_attributes_are_removed(
+    client, auth_headers
+):
+    headers, _ = auth_headers
+    response = client.post(
+        "/notes",
+        headers=headers,
+        json={
+            "title": "Image note",
+            "content": (
+                '<img src="https://example.com/image.jpg" '
+                'data-object-key="users/1/notes/image.jpg" onerror="run()">'
+            ),
+        },
+    )
+
+    assert response.status_code == 201
+    assert 'data-object-key="users/1/notes/image.jpg"' in response.json()["content"]
+    assert "onerror" not in response.json()["content"]
 
 
 def test_user_id_is_not_accepted_in_note_request(client, auth_headers):
