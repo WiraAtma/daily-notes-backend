@@ -24,6 +24,12 @@ app.include_router(notes.router)
 app.include_router(uploads.router)
 app.include_router(ai.router)
 
+@app.get("/")
+async def welcome():
+    return {
+        "message": "Welcome to Daily Notes API",
+        "status": "success",
+    }
 
 @app.get("/health", tags=["health"])
 def health() -> dict[str, str]:
